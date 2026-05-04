@@ -1,21 +1,5 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  ubuntu-winapps-setup
-#  Copyright (C) 2026
-#
-#  This program is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation, either version 3 of the License, or
-#  (at your option) any later version.
-#
-#  BASED ON / KAYNAK:
-#    WinApps — https://github.com/winapps-org/winapps (GPL-3.0)
-#    dockur/windows — https://github.com/dockur/windows (MIT)
-#
-#  This script automates the installation of WinApps on Ubuntu.
-#  It downloads and runs the official WinApps setup.sh during installation.
-#  All WinApps functionality belongs to the WinApps project contributors.
-# ==============================================================================
 #  Ubuntu Full System Setup Script v6
 #  Türkçe/English — TR/EN bilingual support
 #  ─────────────────────────────────────────────────────────────────────────────
@@ -645,22 +629,54 @@ install_docker() {
       sudo apt-get update -y -qq
       sudo apt-get install -y ca-certificates curl gnupg lsb-release
 
+      # Ubuntu türevi dağıtımlar
       local ddistro="$DISTRO_ID"
       [[ "$DISTRO_ID" =~ ^(linuxmint|pop|elementary)$ ]] && ddistro="ubuntu"
 
+      # ── Eski çakışan GPG/repo dosyalarını temizle ─────────────
+      # Çakışma: docker.gpg vs docker.asc, eski repo girişleri
+      sudo rm -f         /etc/apt/keyrings/docker.gpg         /etc/apt/keyrings/docker.asc         /etc/apt/sources.list.d/docker.list         /etc/apt/sources.list.d/docker-ce.list 2>/dev/null || true
       sudo install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL "https://download.docker.com/linux/${ddistro}/gpg" \
-        | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
+
+      # ── Ubuntu sürüm → Docker repo codename tespiti ───────────
+      # Docker resmi deposu her Ubuntu sürümünü desteklemez.
+      # Desteklenmeyen sürümler (25.10/resolute vb.) için
+      # önceki desteklenen sürüme (noble/24.04) fallback yap.
+      local codename; codename=$(lsb_release -cs)
+      local docker_codename="$codename"
+
+      # Docker'ın desteklediği Ubuntu codename'leri
+      local supported_codenames=("focal" "jammy" "mantic" "noble" "oracular" "plucky")
+      local codename_supported=0
+      for cn in "${supported_codenames[@]}"; do
+        if [[ "$codename" == "$cn" ]]; then
+          codename_supported=1
+          break
+        fi
+      done
+
+      if [[ $codename_supported -eq 0 ]]; then
+        warn "Ubuntu '$codename' Docker resmi deposunda henüz yok."
+        warn "Docker deposu için 'noble' (24.04 LTS) kullanılıyor..."
+        docker_codename="noble"
+      fi
+
+      # ── GPG anahtarını ekle ───────────────────────────────────
+      curl -fsSL "https://download.docker.com/linux/${ddistro}/gpg"         | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
       sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-      local codename; codename=$(lsb_release -cs)
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/${ddistro} ${codename} stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+      # ── Depo ekle ─────────────────────────────────────────────
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ddistro} ${docker_codename} stable"         | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
       sudo apt-get update -y -qq
-      sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
-                               docker-buildx-plugin docker-compose-plugin
+      sudo apt-get install -y docker-ce docker-ce-cli containerd.io                                docker-buildx-plugin docker-compose-plugin         || {
+          # Son çare: convenience script
+          warn "Paket kurulumu başarısız, Docker convenience script deneniyor..."
+          local TMP_DOCKER_INSTALL; TMP_DOCKER_INSTALL=$(mktemp /tmp/docker-install-XXXXX.sh)
+          curl -fsSL https://get.docker.com -o "$TMP_DOCKER_INSTALL"
+          sudo sh "$TMP_DOCKER_INSTALL"
+          rm -f "$TMP_DOCKER_INSTALL"
+        }
       ;;
     fedora)
       sudo dnf config-manager --add-repo \
