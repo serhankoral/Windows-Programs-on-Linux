@@ -6,7 +6,7 @@
 
 **Türkçe** | [English](#english)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Bash](https://img.shields.io/badge/Shell-Bash-green.svg)](ubuntu-full-setup.sh)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%2B-E95420.svg)](https://ubuntu.com)
 [![WinApps](https://img.shields.io/badge/WinApps-Docker-blue.svg)](https://github.com/winapps-org/winapps)
@@ -274,7 +274,25 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 [MIT](LICENSE) © 2026
 
-## 🙏 Credits
+## ⚖️ License / Lisans
 
-- [WinApps](https://github.com/winapps-org/winapps) — Windows apps on Linux
-- [dockur/windows](https://github.com/dockur/windows) — Windows in Docker
+This project is a derivative work based on **[WinApps](https://github.com/winapps-org/winapps)** (GPL-3.0).  
+As required by GPL-3.0, this project is also licensed under **GPL-3.0**.
+
+Bu proje **[WinApps](https://github.com/winapps-org/winapps)** (GPL-3.0) üzerine inşa edilmiş türev bir çalışmadır.  
+GPL-3.0 gereği bu proje de **GPL-3.0** lisansı ile dağıtılmaktadır.
+
+See [LICENSE](LICENSE) for full text.
+
+## 🙏 Credits / Teşekkürler
+
+| Project | License | Role |
+|---------|---------|------|
+| [WinApps](https://github.com/winapps-org/winapps) | GPL-3.0 | Core WinApps framework — this script installs and configures it |
+| [dockur/windows](https://github.com/dockur/windows) | MIT | Windows Docker container image |
+| [home-sweet-gnome/dash-to-panel](https://github.com/home-sweet-gnome/dash-to-panel) | GPL-2.0 | GNOME extension |
+| [micheleg/dash-to-dock](https://github.com/micheleg/dash-to-dock) | GPL-2.0 | GNOME extension |
+
+> This script automates the installation of WinApps and related tools.  
+> It downloads and runs the official WinApps `setup.sh` from the WinApps repository.  
+> All credit for WinApps functionality goes to the WinApps contributors.

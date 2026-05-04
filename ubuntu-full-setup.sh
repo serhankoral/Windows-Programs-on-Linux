@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 # ==============================================================================
+#  ubuntu-winapps-setup
+#  Copyright (C) 2026
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  BASED ON / KAYNAK:
+#    WinApps — https://github.com/winapps-org/winapps (GPL-3.0)
+#    dockur/windows — https://github.com/dockur/windows (MIT)
+#
+#  This script automates the installation of WinApps on Ubuntu.
+#  It downloads and runs the official WinApps setup.sh during installation.
+#  All WinApps functionality belongs to the WinApps project contributors.
+# ==============================================================================
 #  Ubuntu Full System Setup Script v6
 #  Türkçe/English — TR/EN bilingual support
 #  ─────────────────────────────────────────────────────────────────────────────
