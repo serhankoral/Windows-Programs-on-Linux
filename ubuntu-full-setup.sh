@@ -2410,7 +2410,7 @@ cleanup_existing() {
     sudo rm -f /usr/local/bin/winapps /usr/local/bin/winapps-setup 2>/dev/null || true
     sudo rm -rf /usr/local/share/winapps 2>/dev/null || true
     sudo find /usr/share/applications/ -name "*.desktop" \
-      -exec grep -l "winapps" {} \; 2>/dev/null | xargs sudo rm -f 2>/dev/null || true
+      -exec grep -l "winapps" {} \; 2>/dev/null | xargs -r sudo rm -f 2>/dev/null || true
     success "$(msg 'Mevcut WinApps kaldırıldı.' 'Existing WinApps removed.')"
   fi
 
