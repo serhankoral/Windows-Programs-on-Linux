@@ -3054,13 +3054,15 @@ _wait_for_rdp_port() {
   local boot_timeout="${BOOT_TIMEOUT:-120}"
   local elapsed=0
   local interval=5
+  local port_check_timeout=3  # per-attempt nc timeout in seconds
 
   echo ""
   info "$(msg "Windows RDP portu bekleniyor (${rdp_ip}:${rdp_port}, maks ${boot_timeout}s)..." \
              "Waiting for Windows RDP port (${rdp_ip}:${rdp_port}, max ${boot_timeout}s)...")"
 
   while [[ $elapsed -lt $boot_timeout ]]; do
-    if timeout 3 nc -z "$rdp_ip" "$rdp_port" &>/dev/null; then
+    if timeout "$port_check_timeout" nc -z "$rdp_ip" "$rdp_port" &>/dev/null; then
+      echo ""
       success "$(msg "RDP portu açık (${elapsed}s içinde hazır)." \
                     "RDP port is open (ready in ${elapsed}s).")"
       return 0
