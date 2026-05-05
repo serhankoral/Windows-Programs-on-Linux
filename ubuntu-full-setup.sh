@@ -139,17 +139,28 @@ ask_password() {
 
 # ─────────────────────────────────────────────
 # Podman compose çalıştırıcı
-# Rootful podman socket üzerinden çalışır (KVM erişimi için)
-# Önce 'podman compose' (yerleşik), bulunamazsa 'podman-compose' kullanır
+# Rootful podman (sudo) ile çalışır (KVM erişimi için).
+# Önce Python tabanlı 'podman-compose' kullanılır; Docker plugin'ini
+# devre dışı bırakır. Fallback: podman compose --compose-provider olmadan.
 # ─────────────────────────────────────────────
 podman_compose_run() {
+  # podman-compose (Python) — Docker plugin karışıklığı yok
+  if command -v podman-compose &>/dev/null; then
+    sudo podman-compose "$@"
+    return
+  fi
+  # 'podman compose' Docker plugin'ine devrediyorsa atla
+  if sudo podman compose version 2>&1 | grep -qi "docker-compose\|docker/cli-plugins"; then
+    error "$(msg \
+      'podman-compose kurulu değil ve podman compose Docker plugin'"'"'ine devrediyor. Lütfen önce podman-compose kurun: pip3 install podman-compose' \
+      'podman-compose not installed and podman compose delegates to Docker plugin. Install it first: pip3 install podman-compose')"
+  fi
+  # Native podman compose (4.x+ yerleşik)
   if sudo podman compose version &>/dev/null 2>&1; then
     sudo podman compose "$@"
-  elif command -v podman-compose &>/dev/null; then
-    sudo podman-compose "$@"
-  else
-    error "$(msg 'podman compose veya podman-compose bulunamadı.' 'Neither podman compose nor podman-compose found.')"
+    return
   fi
+  error "$(msg 'podman-compose bulunamadı. Kurmak için: pip3 install podman-compose' 'podman-compose not found. Install: pip3 install podman-compose')"
 }
 
 # Ham podman komut çalıştırıcı (rootful)
@@ -2574,16 +2585,17 @@ install_podman() {
   local podman_ok=0 compose_ok=0
   command -v podman &>/dev/null \
     && { success "Podman $(msg 'mevcut' 'present'): $(podman --version)"; podman_ok=1; }
-  if sudo podman compose version &>/dev/null 2>&1; then
-    success "podman compose $(msg 'mevcut' 'present')."
-    compose_ok=1
-  elif command -v podman-compose &>/dev/null; then
+  # Sadece podman-compose (Python) kabul edilir — Docker plugin değil
+  if command -v podman-compose &>/dev/null; then
     success "podman-compose $(msg 'mevcut' 'present'): $(podman-compose --version 2>&1 | head -1)"
+    compose_ok=1
+  elif sudo podman compose version 2>&1 | grep -qiv "docker-compose\|docker/cli-plugins"; then
+    success "podman compose native $(msg 'mevcut' 'present')."
     compose_ok=1
   fi
 
   if [[ $podman_ok -eq 1 && $compose_ok -eq 1 ]]; then
-    success "Podman $(msg 'zaten kurulu — atlanıyor.' 'already installed — skipping.')"
+    success "Podman + podman-compose $(msg 'zaten kurulu — atlanıyor.' 'already installed — skipping.')"
     _podman_service_start
     return
   fi
@@ -2594,14 +2606,14 @@ install_podman() {
       sudo apt-get update -y -qq
       sudo apt-get install -y podman podman-compose 2>/dev/null \
         || sudo apt-get install -y podman
-      # podman-docker compatibility paketi (DOCKER_HOST tutarlılığı için)
-      sudo apt-get install -y podman-docker 2>/dev/null || true
+      # podman-docker KURULMAMALI — Docker plugin'ini önce getirir ve
+      # 'podman compose' komutunu Docker'ın compose plugin'ine devreder!
       ;;
     fedora)
-      sudo dnf install -y podman podman-compose podman-docker
+      sudo dnf install -y podman podman-compose
       ;;
     arch)
-      sudo pacman -Syu --needed --noconfirm podman podman-compose podman-docker
+      sudo pacman -Syu --needed --noconfirm podman podman-compose
       ;;
     opensuse)
       sudo zypper install -y podman podman-compose 2>/dev/null \
@@ -2609,9 +2621,8 @@ install_podman() {
       ;;
   esac
 
-  # podman-compose pip ile fallback
-  if ! sudo podman compose version &>/dev/null 2>&1 \
-     && ! command -v podman-compose &>/dev/null; then
+  # podman-compose (Python) yoksa pip ile kur — Docker plugin'i kabul etme
+  if ! command -v podman-compose &>/dev/null; then
     info "$(msg "podman-compose pip ile kuruluyor..." 'Installing podman-compose via pip...')"
     sudo apt-get install -y python3-pip 2>/dev/null \
       || sudo dnf install -y python3-pip 2>/dev/null \
@@ -2657,6 +2668,29 @@ _podman_service_start() {
       sudo chown -R "${uname}:${uname}" "${uhome}/.docker" 2>/dev/null || true
     fi
   done < /etc/passwd
+
+  # ── Registry TLS yapılandırması ─────────────────────────────────
+  # Bazı sistemlerde ghcr.io gibi registry'lerin sertifikaları
+  # sistem CA deposunda bulunmayabilir (x509 hatası).
+  # /etc/containers/registries.conf.d/ altına güvenli registry tanımı eklenir.
+  sudo mkdir -p /etc/containers/registries.conf.d
+  sudo tee /etc/containers/registries.conf.d/winapps-registries.conf >/dev/null <<'REGCONF'
+# WinApps için gerekli registry tanımları
+[[registry]]
+location = "ghcr.io"
+insecure = false
+
+[[registry]]
+location = "docker.io"
+insecure = false
+REGCONF
+
+  # Sistem CA sertifikalarını güncelle (x509 hatalarını giderir)
+  if command -v update-ca-certificates &>/dev/null; then
+    sudo update-ca-certificates --fresh 2>/dev/null || true
+  elif command -v update-ca-trust &>/dev/null; then
+    sudo update-ca-trust extract 2>/dev/null || true
+  fi
 
   success "Podman socket $(msg 'aktif' 'active'): ${PODMAN_SOCKET}"
 }
@@ -2935,6 +2969,20 @@ symlink_for_all_users() {
 
 start_windows_vm() {
   step "$(msg 'BÖLÜM 3G — Windows VM Başlatma' 'SECTION 3G — Starting Windows VM')"
+
+  # ── Windows image'ı önce çek (x509 hatasını erken yakalar) ──────
+  info "$(msg 'Windows container image indiriliyor (ghcr.io/dockur/windows)...' 'Pulling Windows container image (ghcr.io/dockur/windows)...')"
+  info "$(msg 'Bu işlem internet hızına bağlı olarak birkaç dakika sürebilir.' 'This may take several minutes depending on your internet speed.')"
+  if ! sudo podman pull ghcr.io/dockur/windows:latest; then
+    warn "$(msg \
+      'Image indirme başarısız. TLS doğrulaması devre dışı bırakılarak tekrar deneniyor...' \
+      'Image pull failed. Retrying with TLS verification disabled...')"
+    sudo podman pull --tls-verify=false ghcr.io/dockur/windows:latest \
+      || error "$(msg \
+        'Image indirilemedi. İnternet bağlantısını ve firewall ayarlarını kontrol edin.' \
+        'Could not pull image. Check internet connection and firewall settings.')"
+  fi
+  success "$(msg 'Image hazır.' 'Image ready.')"
 
   podman_compose_run --file "$WINAPPS_COMPOSE" up -d
   success "$(msg 'Windows VM başlatıldı (oem aktif → RDP ayarları otomatik uygulanacak).' 'Windows VM started (oem active → RDP settings will be applied automatically).')"
