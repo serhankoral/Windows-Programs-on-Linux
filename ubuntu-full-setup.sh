@@ -39,8 +39,9 @@ readonly EXT_DASH_TO_DOCK="dash-to-dock@micxgx.gmail.com"
 readonly DCONF_DIR="/etc/dconf/db/local.d"
 readonly PODMAN_SOCKET="/run/podman/podman.sock"
 
-# Mevcut Windows VM korunacaksa 1 olarak ayarlanır (yeniden yapılandırma modu)
-# Set to 1 when existing Windows VM should be kept (reconfigure mode)
+# Mevcut Windows VM'i koruyarak sadece WinApps config yenileme modu için bayrak.
+# When 1: Windows installation is skipped; only config files and WinApps are (re)configured.
+# Set via main menu option [4] (Reconfigure) or interactively in cleanup_existing().
 KEEP_EXISTING_WINDOWS=0
 
 REAL_USER="${SUDO_USER:-$USER}"
@@ -2891,7 +2892,9 @@ create_system_config() {
   ask WIN_DISK    "  $(msg 'Disk boyutu' 'Disk size') (64G)" "64G"
   echo ""
   # Windows is always English; Turkish keyboard layout is always added.
-  # Türkçe klavye desteği eklendi — Windows arayüzü İngilizce kalır, klavye tr-TR olur.
+  # Per project requirement: "Türkçe klavye özelliği ekle, Türkçe Windows'u kaldır"
+  # (Add Turkish keyboard support, remove Turkish Windows UI language option.)
+  # To change the keyboard layout, update WIN_KEYBOARD below.
   WIN_LANGUAGE="English"; WIN_REGION="en-US"; WIN_KEYBOARD="tr-TR"
   info "  $(msg 'Windows: İngilizce (en-US) | Klavye düzeni: Türkçe (tr-TR)' 'Windows: English (en-US) | Keyboard layout: Turkish (tr-TR)')"
 
