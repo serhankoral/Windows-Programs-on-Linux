@@ -2400,7 +2400,7 @@ cleanup_existing() {
       _write_winapps_setup_sh "$TMP_UNINSTALL"
     fi
     chmod +x "$TMP_UNINSTALL"
-    sudo -E env \
+    sudo env \
         DOCKER_HOST="unix://${PODMAN_SOCKET}" \
         CONTAINER_MANAGER="podman" \
         WAFLAVOR="podman" \
@@ -3044,6 +3044,38 @@ symlink_for_all_users() {
   success "$(msg 'Tüm kullanıcı oturumları yapılandırıldı.' 'All user sessions configured.')"
 }
 
+# Name: '_wait_for_rdp_port'
+# Role: Polls 127.0.0.1:3389 until the port is open or BOOT_TIMEOUT elapses.
+#       Called after every container restart so that run_winapps_installer can
+#       connect without hitting a premature PORT_TIMEOUT error.
+_wait_for_rdp_port() {
+  local rdp_ip="${RDP_IP:-127.0.0.1}"
+  local rdp_port="${RDP_PORT:-3389}"
+  local boot_timeout="${BOOT_TIMEOUT:-120}"
+  local elapsed=0
+  local interval=5
+
+  echo ""
+  info "$(msg "Windows RDP portu bekleniyor (${rdp_ip}:${rdp_port}, maks ${boot_timeout}s)..." \
+             "Waiting for Windows RDP port (${rdp_ip}:${rdp_port}, max ${boot_timeout}s)...")"
+
+  while [[ $elapsed -lt $boot_timeout ]]; do
+    if timeout 3 nc -z "$rdp_ip" "$rdp_port" &>/dev/null; then
+      success "$(msg "RDP portu açık (${elapsed}s içinde hazır)." \
+                    "RDP port is open (ready in ${elapsed}s).")"
+      return 0
+    fi
+    sleep "$interval"
+    elapsed=$(( elapsed + interval ))
+    echo -n "."
+  done
+
+  echo ""
+  warn "$(msg \
+    "RDP portu ${boot_timeout}s içinde açılmadı. WinApps kurulumu yine de deneniyor." \
+    "RDP port not open after ${boot_timeout}s. Attempting WinApps install anyway.")"
+}
+
 start_windows_vm() {
   step "$(msg 'BÖLÜM 3G — Windows VM Başlatma' 'SECTION 3G — Starting Windows VM')"
 
@@ -3080,6 +3112,7 @@ start_windows_vm() {
 
     confirm "$(msg "Windows oturumu kapalı, devam edelim" 'Windows session is signed out, continue')" \
       || { echo "  $(msg 'Hazır olunca tekrar çalıştırın.' 'Re-run when ready.')"; exit 0; }
+    _wait_for_rdp_port
     return
   fi
 
@@ -3130,6 +3163,7 @@ start_windows_vm() {
   podman_compose_run --file "$WINAPPS_COMPOSE" down
   podman_compose_run --file "$WINAPPS_COMPOSE" up -d
   success "$(msg 'Container yeniden başlatıldı (oem devre dışı).' 'Container restarted (oem disabled).')"
+  _wait_for_rdp_port
 }
 
 run_winapps_installer() {
@@ -3152,7 +3186,7 @@ run_winapps_installer() {
     export DOCKER_HOST="unix://${PODMAN_SOCKET}"
     export CONTAINER_MANAGER="podman"
 
-    sudo -E env \
+    sudo env \
         DOCKER_HOST="unix://${PODMAN_SOCKET}" \
         CONTAINER_MANAGER="podman" \
         WAFLAVOR="podman" \
@@ -3453,7 +3487,7 @@ uninstall_all() {
     _write_winapps_setup_sh "$TMP_UNINSTALL"
   fi
   chmod +x "$TMP_UNINSTALL"
-  sudo -E env \
+  sudo env \
       DOCKER_HOST="unix://${PODMAN_SOCKET}" \
       CONTAINER_MANAGER="podman" \
       WAFLAVOR="podman" \
