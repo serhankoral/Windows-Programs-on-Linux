@@ -39,6 +39,10 @@ readonly EXT_DASH_TO_DOCK="dash-to-dock@micxgx.gmail.com"
 readonly DCONF_DIR="/etc/dconf/db/local.d"
 readonly PODMAN_SOCKET="/run/podman/podman.sock"
 
+# Mevcut Windows VM korunacaksa 1 olarak ayarlanır (yeniden yapılandırma modu)
+# Set to 1 when existing Windows VM should be kept (reconfigure mode)
+KEEP_EXISTING_WINDOWS=0
+
 REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
@@ -1173,7 +1177,12 @@ function waCheckContainerRunning() {
     local COMPOSE_COMMAND=""
 
     # Determine the state of the container.
-    CONTAINER_STATE=$("$WAFLAVOR" ps --all --filter name="WinApps" --format '{{.Status}}')
+    # For rootful Podman (PODMAN_ROOTFUL=1) the socket is owned by root; use sudo.
+    if [ "$WAFLAVOR" = "podman" ] && [ "${PODMAN_ROOTFUL:-0}" = "1" ]; then
+        CONTAINER_STATE=$(sudo podman ps --all --filter name="WinApps" --format '{{.Status}}')
+    else
+        CONTAINER_STATE=$("$WAFLAVOR" ps --all --filter name="WinApps" --format '{{.Status}}')
+    fi
     CONTAINER_STATE=${CONTAINER_STATE,,} # Convert the string to lowercase.
     CONTAINER_STATE=${CONTAINER_STATE%% *} # Extract the first word.
 
@@ -1880,7 +1889,8 @@ function waInstall() {
     fi
 
     # If using podman backend, modify the FreeRDP command to enter a new namespace.
-    if [ "$WAFLAVOR" = "podman" ]; then
+    # Skip for rootful Podman (PODMAN_ROOTFUL=1): ports are already mapped to localhost directly.
+    if [ "$WAFLAVOR" = "podman" ] && [ "${PODMAN_ROOTFUL:-0}" != "1" ]; then
         FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
     fi
 
@@ -2077,7 +2087,8 @@ function waAddApps() {
     fi
 
     # If using podman backend, modify the FreeRDP command to enter a new namespace.
-    if [ "$WAFLAVOR" = "podman" ]; then
+    # Skip for rootful Podman (PODMAN_ROOTFUL=1): ports are already mapped to localhost directly.
+    if [ "$WAFLAVOR" = "podman" ] && [ "${PODMAN_ROOTFUL:-0}" != "1" ]; then
         FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
     fi
 
@@ -2236,73 +2247,85 @@ cleanup_existing() {
   fi
 
   if [[ $vm_exists -eq 1 ]] || [[ $has_volume -eq 1 ]]; then
-    echo ""
-    echo -e "  ${BOLD}${YELLOW}⚠️  $(msg 'Mevcut Windows VM Tespit Edildi!' 'Existing Windows VM Detected!')${NC}"
-    echo "  ──────────────────────────────────────────────────────"
 
-    if [[ $vm_running -eq 1 ]]; then
-      echo -e "  $(msg 'Durum' 'Status') : ${GREEN}$(msg 'ÇALIŞIYOR' 'RUNNING')${NC}"
+    # In reconfigure mode (KEEP_EXISTING_WINDOWS=1 already set), skip VM menu
+    if [[ $KEEP_EXISTING_WINDOWS -eq 1 ]]; then
+      echo ""
+      info "$(msg 'Yeniden yapılandırma modu: Mevcut Windows VM korunuyor.' 'Reconfigure mode: Keeping existing Windows VM.')"
+      if [[ $vm_running -eq 0 ]] && [[ -f "$WINAPPS_COMPOSE" ]]; then
+        info "$(msg 'Windows VM başlatılıyor...' 'Starting Windows VM...')"
+        podman_compose_run --file "$WINAPPS_COMPOSE" up -d 2>/dev/null || true
+      fi
     else
-      echo -e "  $(msg 'Durum' 'Status') : ${YELLOW}$(msg 'DURDURULMUŞ' 'STOPPED')${NC}"
-    fi
+      echo ""
+      echo -e "  ${BOLD}${YELLOW}⚠️  $(msg 'Mevcut Windows VM Tespit Edildi!' 'Existing Windows VM Detected!')${NC}"
+      echo "  ──────────────────────────────────────────────────────"
 
-    if [[ $has_volume -eq 1 ]]; then
-      echo -e "  $(msg 'Disk' 'Disk')   : ${CYAN}winapps_data${NC} (Podman volume)"
-    fi
+      if [[ $vm_running -eq 1 ]]; then
+        echo -e "  $(msg 'Durum' 'Status') : ${GREEN}$(msg 'ÇALIŞIYOR' 'RUNNING')${NC}"
+      else
+        echo -e "  $(msg 'Durum' 'Status') : ${YELLOW}$(msg 'DURDURULMUŞ' 'STOPPED')${NC}"
+      fi
 
-    echo ""
-    echo "  $(msg 'Ne yapmak istersiniz?' 'What do you want to do?')"
-    echo ""
-    echo -e "  ${BOLD}[1]${NC} $(msg "Mevcut Windows'u SİL, sıfırdan kur" 'DELETE existing Windows, fresh install')"
-    echo -e "      ${RED}$(msg '(Dikkat: Windows diski ve tüm veriler kalıcı silinir!)' '(Warning: Windows disk and all data permanently deleted!)')${NC}"
-    echo ""
-    echo -e "  ${BOLD}[2]${NC} $(msg "Mevcut Windows'u KORU, sadece config/ayarları güncelle" 'KEEP existing Windows, only update config/settings')"
-    echo -e "      ${GREEN}$(msg '(Windows kurulu ve ayarları korunur, sadece WinApps config yenilenir)' '(Windows install kept, only WinApps config refreshed)')${NC}"
-    echo ""
-    echo -e "  ${BOLD}[3]${NC} $(msg 'İptal et, çık' 'Cancel, exit')"
-    echo ""
+      if [[ $has_volume -eq 1 ]]; then
+        echo -e "  $(msg 'Disk' 'Disk')   : ${CYAN}winapps_data${NC} (Podman volume)"
+      fi
 
-    local choice=""
-    while true; do
-      read -rp "$(echo -e "  ${YELLOW}$(msg 'Seçiminiz' 'Your choice') [1/2/3]: ${NC}")" choice
-      case "$choice" in
-        1)
-          echo ""
-          warn "$(msg 'Windows VM ve tüm veriler SİLİNECEK!' 'Windows VM and all data will be DELETED!')"
-          if confirm "$(msg 'Emin misiniz? Bu işlem GERİ ALINAMAZ' 'Are you sure? This CANNOT BE UNDONE')" "n"; then
-            info "$(msg 'Windows VM durduruluyor ve siliniyor...' 'Stopping and removing Windows VM...')"
-            if [[ -f "$WINAPPS_COMPOSE" ]]; then
-              podman_compose_run --file "$WINAPPS_COMPOSE" down --volumes 2>/dev/null || true
+      echo ""
+      echo "  $(msg 'Ne yapmak istersiniz?' 'What do you want to do?')"
+      echo ""
+      echo -e "  ${BOLD}[1]${NC} $(msg "Mevcut Windows'u SİL, sıfırdan kur" 'DELETE existing Windows, fresh install')"
+      echo -e "      ${RED}$(msg '(Dikkat: Windows diski ve tüm veriler kalıcı silinir!)' '(Warning: Windows disk and all data permanently deleted!)')${NC}"
+      echo ""
+      echo -e "  ${BOLD}[2]${NC} $(msg "Mevcut Windows'u KORU, sadece config/ayarları güncelle" 'KEEP existing Windows, only update config/settings')"
+      echo -e "      ${GREEN}$(msg '(Windows kurulu ve ayarları korunur, sadece WinApps config yenilenir)' '(Windows install kept, only WinApps config refreshed)')${NC}"
+      echo ""
+      echo -e "  ${BOLD}[3]${NC} $(msg 'İptal et, çık' 'Cancel, exit')"
+      echo ""
+
+      local choice=""
+      while true; do
+        read -rp "$(echo -e "  ${YELLOW}$(msg 'Seçiminiz' 'Your choice') [1/2/3]: ${NC}")" choice
+        case "$choice" in
+          1)
+            echo ""
+            warn "$(msg 'Windows VM ve tüm veriler SİLİNECEK!' 'Windows VM and all data will be DELETED!')"
+            if confirm "$(msg 'Emin misiniz? Bu işlem GERİ ALINAMAZ' 'Are you sure? This CANNOT BE UNDONE')" "n"; then
+              info "$(msg 'Windows VM durduruluyor ve siliniyor...' 'Stopping and removing Windows VM...')"
+              if [[ -f "$WINAPPS_COMPOSE" ]]; then
+                podman_compose_run --file "$WINAPPS_COMPOSE" down --volumes 2>/dev/null || true
+              fi
+              sudo podman rm -f WinApps 2>/dev/null || true
+              sudo podman volume rm winapps_data 2>/dev/null || true
+              sudo podman volume prune -f 2>/dev/null || true
+              success "$(msg 'Windows VM ve disk verisi silindi. Sıfırdan kurulum yapılacak.' 'Windows VM and disk data removed. Fresh install will proceed.')"
+            else
+              info "$(msg 'Silme iptal edildi. Seçim yapın:' 'Deletion cancelled. Make a choice:')"
+              continue
             fi
-            sudo podman rm -f WinApps 2>/dev/null || true
-            sudo podman volume rm winapps_data 2>/dev/null || true
-            sudo podman volume prune -f 2>/dev/null || true
-            success "$(msg 'Windows VM ve disk verisi silindi. Sıfırdan kurulum yapılacak.' 'Windows VM and disk data removed. Fresh install will proceed.')"
-          else
-            info "$(msg 'Silme iptal edildi. Seçim yapın:' 'Deletion cancelled. Make a choice:')"
-            continue
-          fi
-          break
-          ;;
-        2)
-          echo ""
-          info "$(msg 'Mevcut Windows korunuyor. Sadece config dosyaları güncellenecek.' 'Keeping existing Windows. Only config files will be updated.')"
-          if [[ $vm_running -eq 0 ]] && [[ -f "$WINAPPS_COMPOSE" ]]; then
-            info "$(msg 'Windows VM başlatılıyor...' 'Starting Windows VM...')"
-            podman_compose_run --file "$WINAPPS_COMPOSE" up -d 2>/dev/null || true
-          fi
-          break
-          ;;
-        3)
-          echo ""
-          info "$(msg 'İptal edildi.' 'Cancelled.')"
-          exit 0
-          ;;
-        *)
-          warn "$(msg 'Geçersiz seçim. 1, 2 veya 3 girin.' 'Invalid choice. Enter 1, 2 or 3.')"
-          ;;
-      esac
-    done
+            break
+            ;;
+          2)
+            echo ""
+            info "$(msg 'Mevcut Windows korunuyor. Sadece config dosyaları güncellenecek.' 'Keeping existing Windows. Only config files will be updated.')"
+            KEEP_EXISTING_WINDOWS=1
+            if [[ $vm_running -eq 0 ]] && [[ -f "$WINAPPS_COMPOSE" ]]; then
+              info "$(msg 'Windows VM başlatılıyor...' 'Starting Windows VM...')"
+              podman_compose_run --file "$WINAPPS_COMPOSE" up -d 2>/dev/null || true
+            fi
+            break
+            ;;
+          3)
+            echo ""
+            info "$(msg 'İptal edildi.' 'Cancelled.')"
+            exit 0
+            ;;
+          *)
+            warn "$(msg 'Geçersiz seçim. 1, 2 veya 3 girin.' 'Invalid choice. Enter 1, 2 or 3.')"
+            ;;
+        esac
+      done
+    fi
     echo ""
   fi
 
@@ -2867,22 +2890,10 @@ create_system_config() {
   ask WIN_CORES   "  $(msg 'CPU çekirdek sayısı' 'CPU cores')" "4"
   ask WIN_DISK    "  $(msg 'Disk boyutu' 'Disk size') (64G)" "64G"
   echo ""
-  echo -e "  ${BOLD}$(msg 'Windows Dil Ayarı' 'Windows Language')${NC}"
-  echo "  ─────────────────────────────────────"
-  echo "  1 → Türkçe (tr-TR)"
-  echo "  2 → English (en-US)"
-  echo ""
-  local WIN_LANG_CHOICE
-  read -rp "$(echo -e "  ${CYAN}$(msg 'Dil seçin' 'Select language') [1/2] [1]: ${NC}")" WIN_LANG_CHOICE
-  WIN_LANG_CHOICE="${WIN_LANG_CHOICE:-1}"
-
-  if [[ "$WIN_LANG_CHOICE" == "1" ]]; then
-    WIN_LANGUAGE="Turkish"; WIN_REGION="tr-TR"; WIN_KEYBOARD="tr-TR"
-    success "  $(msg 'Türkçe Windows seçildi.' 'Turkish Windows selected.')"
-  else
-    WIN_LANGUAGE="English"; WIN_REGION="en-US"; WIN_KEYBOARD="en-US"
-    success "  $(msg 'İngilizce Windows seçildi.' 'English Windows selected.')"
-  fi
+  # Windows is always English; Turkish keyboard layout is always added.
+  # Türkçe klavye desteği eklendi — Windows arayüzü İngilizce kalır, klavye tr-TR olur.
+  WIN_LANGUAGE="English"; WIN_REGION="en-US"; WIN_KEYBOARD="tr-TR"
+  info "  $(msg 'Windows: İngilizce (en-US) | Klavye düzeni: Türkçe (tr-TR)' 'Windows: English (en-US) | Keyboard layout: Turkish (tr-TR)')"
 
   echo "  100 → Normal  |  140 → HD  |  180 → 4K"
   ask RDP_SCALE   "  $(msg 'Ekran ölçeği' 'Display scale')" "100"
@@ -2910,8 +2921,8 @@ DEBUG="true"
 AUTOPAUSE="off"
 AUTOPAUSE_TIME="300"
 FREERDP_COMMAND=""
-PORT_TIMEOUT="5"
-RDP_TIMEOUT="30"
+PORT_TIMEOUT="10"
+RDP_TIMEOUT="60"
 APP_SCAN_TIMEOUT="60"
 BOOT_TIMEOUT="120"
 HIDEF="on"
@@ -3005,6 +3016,42 @@ symlink_for_all_users() {
 start_windows_vm() {
   step "$(msg 'BÖLÜM 3G — Windows VM Başlatma' 'SECTION 3G — Starting Windows VM')"
 
+  # ── Yeniden yapılandırma modu: Windows kurulumu atla ──────────
+  if [[ $KEEP_EXISTING_WINDOWS -eq 1 ]]; then
+    info "$(msg 'Mevcut Windows korunuyor — container yeni config ile yeniden başlatılıyor.' 'Keeping existing Windows — restarting container with new config.')"
+
+    # OEM olmadan compose yaz (Windows zaten kurulu)
+    _write_compose_yaml "without_oem"
+
+    info "$(msg 'FreeRDP sertifikaları temizleniyor...' 'Cleaning FreeRDP certificates...')"
+    sudo rm -rf /root/.config/freerdp/server/ 2>/dev/null || true
+    rm -rf "${REAL_HOME}/.config/freerdp/server/" 2>/dev/null || true
+    while IFS=: read -r uname _ uid _ _ uhome _; do
+      if [[ "$uid" -ge 1000 ]] && [[ -d "$uhome" ]]; then
+        rm -rf "${uhome}/.config/freerdp/server/" 2>/dev/null || true
+      fi
+    done < /etc/passwd
+    success "FreeRDP $(msg 'sertifikaları temizlendi.' 'certificates cleaned.')"
+
+    info "$(msg 'Container yeniden başlatılıyor...' 'Restarting container...')"
+    podman_compose_run --file "$WINAPPS_COMPOSE" down 2>/dev/null || true
+    podman_compose_run --file "$WINAPPS_COMPOSE" up -d
+    success "$(msg 'Container başlatıldı.' 'Container started.')"
+
+    echo ""
+    echo -e "  ${BOLD}${YELLOW}⚠️  $(msg 'ÖNEMLİ' 'IMPORTANT')${NC}"
+    echo ""
+    echo "  $(msg "Windows'ta oturum AÇIKSA kapatın (Sign Out)." 'If you are logged into Windows, SIGN OUT (not just lock).')"
+    echo "  $(msg 'Oturum açıkken RDP bağlantısı başarısız olur.' 'RDP will fail if a Windows user session is active.')"
+    echo ""
+    echo -e "  $(msg 'VNC ile kontrol edin' 'Check via VNC'): ${CYAN}http://127.0.0.1:8006${NC}"
+    echo ""
+
+    confirm "$(msg "Windows oturumu kapalı, devam edelim" 'Windows session is signed out, continue')" \
+      || { echo "  $(msg 'Hazır olunca tekrar çalıştırın.' 'Re-run when ready.')"; exit 0; }
+    return
+  fi
+
   # ── Windows image'ı önce çek (x509 hatasını erken yakalar) ──────
   info "$(msg 'Windows container image indiriliyor (ghcr.io/dockur/windows)...' 'Pulling Windows container image (ghcr.io/dockur/windows)...')"
   info "$(msg 'Bu işlem internet hızına bağlı olarak birkaç dakika sürebilir.' 'This may take several minutes depending on your internet speed.')"
@@ -3078,6 +3125,7 @@ run_winapps_installer() {
         DOCKER_HOST="unix://${PODMAN_SOCKET}" \
         CONTAINER_MANAGER="podman" \
         WAFLAVOR="podman" \
+        PODMAN_ROOTFUL="1" \
       bash "$TMP_SETUP" --system --setupAllOfficiallySupportedApps
     rm -f "$TMP_SETUP"
   else
@@ -3152,6 +3200,7 @@ if sudo -E env \\
     DOCKER_HOST="unix://\${PODMAN_SOCKET}" \\
     CONTAINER_MANAGER="podman" \\
     WAFLAVOR="podman" \\
+    PODMAN_ROOTFUL="1" \\
     bash "\$EMBEDDED_SETUP" --system --add-apps; then
   echo ""
   echo -e "  \${GREEN}\${BOLD}✅ Tamamlandı!\${NC}"
@@ -3508,19 +3557,23 @@ main() {
   if [[ "$SCRIPT_LANG" == "tr" ]]; then
     echo -e "  ${BOLD}Ne yapmak istersiniz?${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC} Kurulum   — GNOME + Touchpad + WinApps (Podman) + Yenileme"
-    echo -e "  ${CYAN}[2]${NC} Kaldırma  — Her şeyi temizle"
+    echo -e "  ${CYAN}[1]${NC} Kurulum       — GNOME + Touchpad + WinApps (Podman) + Yenileme"
+    echo -e "  ${CYAN}[2]${NC} Kaldırma      — Her şeyi temizle"
     echo -e "  ${CYAN}[3]${NC} Çıkış"
+    echo -e "  ${CYAN}[4]${NC} Config Yenile — Windows'u koruyarak WinApps ayarlarını yenile"
+    echo -e "      ${GREEN}(RDP hatası aldıysanız veya credentials değiştirmek istiyorsanız)${NC}"
     echo ""
-    read -rp "$(echo -e "  ${YELLOW}Seçiminiz [1/2/3]: ${NC}")" main_choice
+    read -rp "$(echo -e "  ${YELLOW}Seçiminiz [1/2/3/4]: ${NC}")" main_choice
   else
     echo -e "  ${BOLD}What would you like to do?${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC} Install   — GNOME + Touchpad + WinApps (Podman) + Refresh"
-    echo -e "  ${CYAN}[2]${NC} Uninstall — Remove everything"
+    echo -e "  ${CYAN}[1]${NC} Install       — GNOME + Touchpad + WinApps (Podman) + Refresh"
+    echo -e "  ${CYAN}[2]${NC} Uninstall     — Remove everything"
     echo -e "  ${CYAN}[3]${NC} Exit"
+    echo -e "  ${CYAN}[4]${NC} Reconfigure   — Keep Windows, rebuild WinApps config only"
+    echo -e "      ${GREEN}(Use if you had an RDP error or want to change credentials)${NC}"
     echo ""
-    read -rp "$(echo -e "  ${YELLOW}Your choice [1/2/3]: ${NC}")" main_choice
+    read -rp "$(echo -e "  ${YELLOW}Your choice [1/2/3/4]: ${NC}")" main_choice
   fi
 
   case "${main_choice:-1}" in
@@ -3605,6 +3658,20 @@ main() {
     3)
       msg "  Çıkılıyor." "  Exiting."
       exit 0
+      ;;
+
+    4)
+      # Config Yenile / Reconfigure — Windows'u koru, WinApps'i yeniden kur
+      KEEP_EXISTING_WINDOWS=1
+      check_prerequisites
+      cleanup_existing
+      setup_oem
+      create_system_config
+      symlink_for_all_users
+      start_windows_vm
+      run_winapps_installer
+      install_refresh_system
+      print_summary
       ;;
 
     *)
