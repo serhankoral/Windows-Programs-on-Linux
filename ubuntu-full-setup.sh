@@ -2386,6 +2386,34 @@ cleanup_existing() {
     info "$(msg 'Eski systemd timer temizlendi.' 'Old systemd timer cleaned.')"
   fi
 
+  # ── Mevcut WinApps sistem kurulumunu kaldır ───────────────────
+  # waCheckExistingInstall, /usr/local/bin/winapps gibi eski
+  # ikili dosyaları tespit edip EC_EXISTING_INSTALL (3) ile
+  # çıkacağından bunları temizlemek gerekir.
+  if [[ -f /usr/local/bin/winapps ]] || [[ -d /usr/local/share/winapps ]]; then
+    info "$(msg 'Mevcut WinApps sistem kurulumu kaldırılıyor...' 'Removing existing WinApps system installation...')"
+    local TMP_UNINSTALL
+    TMP_UNINSTALL=$(mktemp /tmp/winapps-uninstall-XXXXX.sh)
+    if [[ -f /usr/local/share/winapps/embedded-setup.sh ]]; then
+      sudo cp /usr/local/share/winapps/embedded-setup.sh "$TMP_UNINSTALL"
+    else
+      _write_winapps_setup_sh "$TMP_UNINSTALL"
+    fi
+    chmod +x "$TMP_UNINSTALL"
+    sudo -E env \
+        DOCKER_HOST="unix://${PODMAN_SOCKET}" \
+        CONTAINER_MANAGER="podman" \
+        WAFLAVOR="podman" \
+      bash "$TMP_UNINSTALL" --system --uninstall 2>/dev/null || true
+    rm -f "$TMP_UNINSTALL"
+    # Fallback: ikili dosyalar hâlâ duruyorsa elle sil
+    sudo rm -f /usr/local/bin/winapps /usr/local/bin/winapps-setup 2>/dev/null || true
+    sudo rm -rf /usr/local/share/winapps 2>/dev/null || true
+    sudo find /usr/share/applications/ -name "*.desktop" \
+      -exec grep -l "winapps" {} \; 2>/dev/null | xargs sudo rm -f 2>/dev/null || true
+    success "$(msg 'Mevcut WinApps kaldırıldı.' 'Existing WinApps removed.')"
+  fi
+
   success "$(msg 'Temizlik tamamlandı — yeniden kurulum başlıyor.' 'Cleanup complete — reinstall starting.')"
 }
 
