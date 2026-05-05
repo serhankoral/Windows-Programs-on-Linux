@@ -144,23 +144,16 @@ ask_password() {
 # devre dışı bırakır. Fallback: podman compose --compose-provider olmadan.
 # ─────────────────────────────────────────────
 podman_compose_run() {
-  # podman-compose (Python) — Docker plugin karışıklığı yok
+  # Her zaman doğrudan 'podman-compose' (Python) kullan.
+  # 'podman compose' komutu, sistemde /usr/libexec/docker/cli-plugins/docker-compose
+  # varsa Docker plugin'ine devreder — bunu asla kullanma.
   if command -v podman-compose &>/dev/null; then
     sudo podman-compose "$@"
     return
   fi
-  # 'podman compose' Docker plugin'ine devrediyorsa atla
-  if sudo podman compose version 2>&1 | grep -qi "docker-compose\|docker/cli-plugins"; then
-    error "$(msg \
-      'podman-compose kurulu değil ve podman compose Docker plugin'"'"'ine devrediyor. Lütfen önce podman-compose kurun: pip3 install podman-compose' \
-      'podman-compose not installed and podman compose delegates to Docker plugin. Install it first: pip3 install podman-compose')"
-  fi
-  # Native podman compose (4.x+ yerleşik)
-  if sudo podman compose version &>/dev/null 2>&1; then
-    sudo podman compose "$@"
-    return
-  fi
-  error "$(msg 'podman-compose bulunamadı. Kurmak için: pip3 install podman-compose' 'podman-compose not found. Install: pip3 install podman-compose')"
+  error "$(msg \
+    'podman-compose bulunamadı! Kurmak için: sudo pip3 install podman-compose' \
+    'podman-compose not found! Install with: sudo pip3 install podman-compose')"
 }
 
 # Ham podman komut çalıştırıcı (rootful)
@@ -2669,10 +2662,52 @@ _podman_service_start() {
     fi
   done < /etc/passwd
 
+  # ── podman-docker kaldır (varsa) — Docker plugin karışıklığını önler ──
+  if dpkg -l podman-docker &>/dev/null 2>&1; then
+    info "$(msg \
+      'podman-docker paketi bulundu — kaldırılıyor (Docker plugin çakışması önleniyor)...' \
+      'podman-docker package found — removing (prevents Docker plugin conflict)...')"
+    sudo apt-get remove -y podman-docker 2>/dev/null \
+      || sudo dnf remove -y podman-docker 2>/dev/null \
+      || sudo pacman -R --noconfirm podman-docker 2>/dev/null \
+      || true
+    # Docker plugin binary'sini de doğrudan sil
+    sudo rm -f /usr/libexec/docker/cli-plugins/docker-compose 2>/dev/null || true
+    success "podman-docker $(msg 'kaldırıldı.' 'removed.')"
+  fi
+  # Docker plugin dosyası varsa direkt sil (farklı kurulum yollarından gelmiş olabilir)
+  if [[ -f /usr/libexec/docker/cli-plugins/docker-compose ]]; then
+    warn "$(msg \
+      '/usr/libexec/docker/cli-plugins/docker-compose bulundu — siliniyor...' \
+      '/usr/libexec/docker/cli-plugins/docker-compose found — removing...')"
+    sudo rm -f /usr/libexec/docker/cli-plugins/docker-compose
+    success "$(msg 'Docker compose plugin silindi.' 'Docker compose plugin removed.')"
+  fi
+
+  # ── /etc/containers/policy.json ─────────────────────────────────
+  # Podman'ın container image'larını kabul etmesi için trust policy zorunludur.
+  # Yoksa "no policy.json file found" hatası alınır.
+  sudo mkdir -p /etc/containers
+  if [[ ! -f /etc/containers/policy.json ]]; then
+    info "$(msg '/etc/containers/policy.json oluşturuluyor...' 'Creating /etc/containers/policy.json...')"
+    sudo tee /etc/containers/policy.json >/dev/null <<'POLICYJSON'
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ],
+    "transports": {
+        "docker-daemon": {
+            "": [{"type": "insecureAcceptAnything"}]
+        }
+    }
+}
+POLICYJSON
+    success "/etc/containers/policy.json $(msg 'oluşturuldu.' 'created.')"
+  fi
+
   # ── Registry TLS yapılandırması ─────────────────────────────────
-  # Bazı sistemlerde ghcr.io gibi registry'lerin sertifikaları
-  # sistem CA deposunda bulunmayabilir (x509 hatası).
-  # /etc/containers/registries.conf.d/ altına güvenli registry tanımı eklenir.
   sudo mkdir -p /etc/containers/registries.conf.d
   sudo tee /etc/containers/registries.conf.d/winapps-registries.conf >/dev/null <<'REGCONF'
 # WinApps için gerekli registry tanımları
